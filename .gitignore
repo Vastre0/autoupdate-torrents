@@ -1,4 +1,13 @@
 cookies.json
 torrent_config.json
 val.py
-.venv
+.venv/
+venv/
+.idea
+.idea/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+*.tmp
