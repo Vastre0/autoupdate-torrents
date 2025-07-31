@@ -239,7 +239,6 @@ class TorrentApp(QMainWindow):
             return
 
         try:
-            # Передаем нашу функцию логирования в бэкенд
             rutt_to_qb.add_torrent_from_url(url, self.selected_path, log_func=self.log_message)
             QMessageBox.information(self, "Успех", "Задание на добавление торрента создано!")
             self.url_entry.clear()
@@ -264,7 +263,6 @@ class TorrentApp(QMainWindow):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    # Устанавливаем название приложения для корректной работы в некоторых ОС
     QApplication.setApplicationName("Torrent Manager")
     window = TorrentApp()
     window.show()
