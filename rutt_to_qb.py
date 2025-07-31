@@ -28,7 +28,8 @@ headers = {
     # Добавьте другие headers, если они были в val.py
 }
 
-def load_config():
+
+def load_config(log_func=None):
     """Загружает или создает конфигурационный файл"""
     if os.path.exists(CONFIG_FILE):
         try:
@@ -38,17 +39,23 @@ def load_config():
                     raise ValueError("Файл пустой")
                 return json.loads(content)
         except (json.JSONDecodeError, ValueError) as e:
-            print(f"Повреждённый конфиг ({e}), пересоздаём...")
+            msg = f"Повреждённый конфиг ({e}), пересоздаём..."
+            if log_func:
+                log_func(msg)
+            else:
+                print(msg)
             os.remove(CONFIG_FILE)
 
     config = {"torrents": {}}
     save_config(config)
     return config
 
+
 def save_config(config):
     """Сохраняет конфигурацию в файл"""
     with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
         json.dump(config, f, indent=4, ensure_ascii=False)
+
 
 def extract_torrent_id(url):
     """Извлекает ID торрента из ссылки"""
@@ -58,34 +65,51 @@ def extract_torrent_id(url):
     else:
         raise ValueError(f"Не удалось извлечь ID из ссылки: {url}")
 
-def add_torrent_from_url(topic_url, save_path):
+
+def add_torrent_from_url(topic_url, save_path, log_func=None):
     """Добавляет новую раздачу по ссылке"""
     torrent_id = extract_torrent_id(topic_url)
-    config = load_config()
+    config = load_config(log_func)  # Передаём log_func
     config['torrents'][torrent_id] = {"save_path": save_path, "url": topic_url}
     save_config(config)
-    print(f"Добавлена новая раздача: ID {torrent_id}, путь: {save_path}")
+    if log_func:
+        log_func(f"Добавлена новая раздача: ID {torrent_id}, путь: {save_path}")
+    else:
+        print(f"Добавлена новая раздача: ID {torrent_id}, путь: {save_path}")
 
-def download_torrent(torrent_id):
+
+def download_torrent(torrent_id, log_func=None):
     """Скачивает торрент-файл с Rutracker"""
     base_url = "https://rutracker.org/forum/"
     topic_url = f"viewtopic.php?t={torrent_id}"
 
     response = requests.get(base_url + topic_url, cookies=cookies, headers=headers)
     if response.status_code != 200:
-        print(f"Ошибка загрузки страницы: {response.status_code}")
+        msg = f"Ошибка загрузки страницы: {response.status_code}"
+        if log_func:
+            log_func(msg)
+        else:
+            print(msg)
         return None
 
     soup = BeautifulSoup(response.text, 'html.parser')
     dl_link = soup.find('a', class_='dl-link')
     if not dl_link:
-        print("Ошибка: Ссылка на скачивание не найдена!")
+        msg = "Ошибка: Ссылка на скачивание не найдена!"
+        if log_func:
+            log_func(msg)
+        else:
+            print(msg)
         return None
 
     torrent_url = base_url + dl_link['href']
     torrent_response = requests.get(torrent_url, cookies=cookies, headers=headers)
     if torrent_response.status_code != 200:
-        print(f"Ошибка загрузки торрента: {torrent_response.status_code}")
+        msg = f"Ошибка загрузки торрента: {torrent_response.status_code}"
+        if log_func:
+            log_func(msg)
+        else:
+            print(msg)
         return None
 
     content_disposition = torrent_response.headers.get('Content-Disposition', '')
@@ -98,10 +122,15 @@ def download_torrent(torrent_id):
     with open(filename, 'wb') as f:
         f.write(torrent_response.content)
 
-    print(f"Торрент сохранен как: {filename}")
+    msg = f"Торрент сохранен как: {filename}"
+    if log_func:
+        log_func(msg)
+    else:
+        print(msg)
     return filename
 
-def add_to_qbittorrent(torrent_file, save_path):
+
+def add_to_qbittorrent(torrent_file, save_path, log_func=None):
     """Добавляет торрент в qBittorrent"""
     qb = Client(host=QB_HOST, username=QB_USERNAME, password=QB_PASSWORD)
 
@@ -111,16 +140,34 @@ def add_to_qbittorrent(torrent_file, save_path):
         os.remove(torrent_file)
         return True
     except Exception as e:
-        print(f"Ошибка при добавлении в qBittorrent: {e}")
+        msg = f"Ошибка при добавлении в qBittorrent: {e}"
+        if log_func:
+            log_func(msg)
+        else:
+            print(msg)
         return False
 
-def update_torrents():
+
+def update_torrents(log_func=None):
     """Обновляет все раздачи из конфига"""
-    config = load_config()
+    config = load_config(log_func)  # Передаём log_func
     for torrent_id, settings in config['torrents'].items():
-        print(f"\nОбработка раздачи ID: {torrent_id}")
-        torrent_file = download_torrent(torrent_id)
-        if torrent_file and add_to_qbittorrent(torrent_file, settings['save_path']):
-            print(f"Раздача {torrent_id} успешно добавлена в qBittorrent")
+        msg = f"\nОбработка раздачи ID: {torrent_id}"
+        if log_func:
+            log_func(msg)
         else:
-            print(f"Не удалось обработать раздачу {torrent_id}")
+            print(msg)
+
+        torrent_file = download_torrent(torrent_id, log_func)
+        if torrent_file and add_to_qbittorrent(torrent_file, settings['save_path'], log_func):
+            msg = f"Раздача {torrent_id} успешно добавлена в qBittorrent"
+            if log_func:
+                log_func(msg)
+            else:
+                print(msg)
+        else:
+            msg = f"Не удалось обработать раздачу {torrent_id}"
+            if log_func:
+                log_func(msg)
+            else:
+                print(msg)
