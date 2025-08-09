@@ -34,3 +34,10 @@ QHeaderView::section {
     padding: 4px;
     border: 1px solid #ccc;
 }
+QLabel#errorLabel {
+    background-color: #D9453B; /* Светло-красный */
+    color: #FFFFFF;
+    padding: 8px;
+    border-radius: 4px;
+    font-weight: bold;
+}

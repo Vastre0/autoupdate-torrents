@@ -12,3 +12,7 @@ __pycache__/
 *.log
 *.tmp
 user-config.json
+dist/
+build/
+*.spec
+*.exe

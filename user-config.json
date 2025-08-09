@@ -2,9 +2,17 @@
     "theme": "dark",
     "logs_expanded": false,
     "window_geometry": {
-        "x": 172,
-        "y": 107,
-        "width": 800,
-        "height": 569
-    }
+        "x": 393,
+        "y": 133,
+        "width": 989,
+        "height": 686
+    },
+    "minimize_to_tray": true,
+    "close_to_tray": true,
+    "show_tray_notifications": true,
+    "torrent_columns_width": [
+        364,
+        72,
+        523
+    ]
 }

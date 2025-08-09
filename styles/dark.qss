@@ -38,3 +38,10 @@ QHeaderView::section {
 QMessageBox {
     background-color: #3c3f41;
 }
+QLabel#errorLabel {
+    background-color: #8C1C13; /* Темно-красный */
+    color: #FFFFFF;
+    padding: 8px;
+    border-radius: 4px;
+    font-weight: bold;
+}
