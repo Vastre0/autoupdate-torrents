@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Torrent Manager
+GenericName=Torrent auto-updater
+Comment=Автообновление торрентов с rutracker (со встроенным обходом блокировок)
+Comment[en]=Auto-update torrents from rutracker (with built-in censorship bypass)
+Exec=autoupdate-torrents
+Icon=autoupdate-torrents
+Terminal=false
+Categories=Network;FileTransfer;Qt;
+Keywords=torrent;rutracker;qbittorrent;torrents;антизапрет;
+StartupWMClass=Torrent Manager

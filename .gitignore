@@ -1,5 +1,7 @@
+# Зависимости / артефакты сборки
 cookies.json
 torrent_config.json
+user-config.json
 val.py
 .venv/
 venv/
@@ -11,8 +13,15 @@ __pycache__/
 *.pyd
 *.log
 *.tmp
-user-config.json
 dist/
 build/
 *.spec
 *.exe
+*.egg-info/
+*.whl
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+src/
+pkg/
+*.pkg.tar.zst
