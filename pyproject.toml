@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "autoupdate-torrents"
+version = "2.0.0"
+description = "Автообновление торрентов с rutracker (CachyOS/Arch) со встроенным обходом блокировок"
+readme = "README.md"
+requires-python = ">=3.10"
+keywords = ["torrent", "rutracker", "qbittorrent", "arch", "cachyos", "antizapret"]
+classifiers = [
+    "Environment :: X11 Applications :: Qt",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: Internet :: File Transfer Protocol (FTP)",
+]
+dependencies = [
+    "PyQt6>=6.4",
+    "requests>=2.28",
+    "beautifulsoup4>=4.11",
+    "qbittorrent-api>=2023.4",
+]
+
+[project.optional-dependencies]
+# SOCKS5-прокси (например, Tor: socks5://127.0.0.1:9050)
+socks = ["PySocks>=1.7"]
+
+[project.scripts]
+autoupdate-torrents = "torrent_manager.cli:main"
+
+[project.gui-scripts]
+autoupdate-torrents-gui = "torrent_manager.cli:main"
+
+[tool.setuptools]
+packages = [
+    "torrent_manager",
+    "torrent_manager.gui",
+]
+
+[tool.setuptools.package-data]
+torrent_manager = [
+    "data/icon.png",
+    "data/icon.ico",
+    "data/styles/*.qss",
+]

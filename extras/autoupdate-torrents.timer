@@ -1,0 +1,12 @@
+[Unit]
+Description=Периодическое обновление раздач rutracker
+
+[Timer]
+# Первый запуск через 5 минут после входа, далее ежедневно в 04:30
+OnBootSec=5min
+OnCalendar=*-*-* 04:30:00
+Persistent=true
+RandomizedDelaySec=30min
+
+[Install]
+WantedBy=timers.target

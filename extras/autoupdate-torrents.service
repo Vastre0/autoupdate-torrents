@@ -1,0 +1,12 @@
+[Unit]
+Description=Обновление раздач rutracker в qBittorrent
+Documentation=file://%h/.config/autoupdate-torrents
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/autoupdate-torrents --update --quiet
+# Приложению не нужен графический интерфейс:
+Environment=QT_QPA_PLATFORM=offscreen
+Nice=10

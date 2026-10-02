@@ -1,0 +1,13 @@
+# Зависимости приложения.
+#
+# На CachyOS/Arch большинство из них есть в репозиториях:
+#   sudo pacman -S python-pyqt6 python-requests python-beautifulsoup4
+# qbittorrent-api поставляется из AUR (или ставится в venv скриптом install.sh):
+#   paru -S python-qbittorrent-api
+PyQt6>=6.4
+requests>=2.28
+beautifulsoup4>=4.11
+qbittorrent-api>=2023.4
+
+# Необязательно: SOCKS5-прокси (например, Tor на 127.0.0.1:9050)
+# PySocks>=1.7
