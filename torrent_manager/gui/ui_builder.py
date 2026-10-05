@@ -131,8 +131,8 @@ class UiBuilder:
         layout.addWidget(self.window.settings_btn)
 
         self.window.import_cookies_btn = self._create_button(
-            "Импорт куки из буфера",
-            tooltip="Скопируйте строку Cookie с rutracker.org и нажмите эту кнопку",
+            "Импорт куки",
+            tooltip="Открыть окно импорта куки rutracker.org",
             on_click=self.window.import_cookies_from_clipboard,
         )
         layout.addWidget(self.window.import_cookies_btn)

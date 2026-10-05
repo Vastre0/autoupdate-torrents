@@ -31,10 +31,14 @@ USER_AGENT = (
 )
 
 DEFAULT_PAC_URLS = [
+    "https://e.cen.rodeo:8443/proxy.pac",
+    "https://e.cen.rodeo:18443/proxy.pac",
     "https://antizapret.prostovpn.org:8443/proxy.pac",
     "https://antizapret.prostovpn.org:18443/proxy.pac",
     "https://antizapret.prostovpn.org/proxy.pac",
-    "https://e.cen.rodeo:8443/proxy.pac",
+    "https://api.antizapret.info/proxy.pac",
+    "https://rebrand.ly/ac-chrome-proxy",
+    "https://rebrand.ly/ac-chrome-https-proxy",
 ]
 
 STATE_FILE = "state.json"
@@ -98,6 +102,11 @@ class BypassManager:
     @property
     def prefer_https_proxy(self) -> bool:
         return bool(self.settings.get("prefer_https_proxy", True))
+
+    @property
+    def use_system_proxy(self) -> bool:
+        """Использовать системный прокси (переменные окружения HTTP_PROXY/HTTPS_PROXY)."""
+        return bool(self.settings.get("use_system_proxy", False))
 
     @property
     def ttl_seconds(self) -> float:
@@ -232,6 +241,11 @@ class BypassManager:
             except requests.RequestException as error:
                 errors.append(f"{url}: {error}")
                 continue
+            except Exception as error:
+                # urllib3.LocationParseError (невалидный хост в редиректе)
+                # и другие нетипичные ошибки сети — не роняем цикл.
+                errors.append(f"{url}: {error}")
+                continue
             if response.status_code != 200:
                 errors.append(f"{url}: HTTP {response.status_code}")
                 continue
@@ -358,10 +372,34 @@ class BypassManager:
         parsed = urlsplit(url)
         return parsed.hostname or parsed.netloc or url
 
+    def _system_proxies(self) -> dict[str, str] | None:
+        """Прокси из переменных окружения (HTTP_PROXY, HTTPS_PROXY, ALL_PROXY)."""
+        import os
+        http_proxy = os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy")
+        https_proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")
+        all_proxy = os.environ.get("ALL_PROXY") or os.environ.get("all_proxy")
+        proxies = {}
+        if http_proxy:
+            proxies["http"] = http_proxy
+        if https_proxy:
+            proxies["https"] = https_proxy
+        elif http_proxy and not https_proxy:
+            proxies["https"] = http_proxy
+        if all_proxy and not proxies:
+            proxies["http"] = proxies["https"] = all_proxy
+        return proxies or None
+
     def proxies_for_host(self, host: str) -> dict[str, str] | None:
         """Прокси для хоста или ``None``, если прокси не требуется."""
         if not self.enabled:
             return None
+
+        # Системный прокси имеет приоритет, если включён в настройках
+        if self.use_system_proxy:
+            sys_proxies = self._system_proxies()
+            if sys_proxies:
+                return sys_proxies
+
         pac = self.pac
         if pac is None:
             return None
@@ -378,15 +416,25 @@ class BypassManager:
         return self.proxies_for_host(self.host_from_url(url))
 
     def fallback_proxies(self, host: str) -> dict[str, str] | None:
-        """Прокси «на всякий случай»: ручной или адрес из PAC-скрипта.
+        """Прокси «на всякий случай»: системный > ручной > PAC.
 
         Используется, когда прямое соединение не удалось (типичный признак
         блокировки со стороны провайдера).
         """
         if not self.enabled:
             return None
+
+        # 1. Системный прокси (если включён)
+        if self.use_system_proxy:
+            sys_proxies = self._system_proxies()
+            if sys_proxies:
+                return sys_proxies
+
+        # 2. Ручной прокси
         if self.manual_proxy:
             return {"http": self.manual_proxy, "https": self.manual_proxy}
+
+        # 3. PAC-прокси
         pac = self.pac
         if pac is None:
             self.ensure_loaded(background_refresh=False)

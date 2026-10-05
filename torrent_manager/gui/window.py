@@ -21,6 +21,7 @@ from ..config import ConfigManager
 from ..cookies import HELP_TEXT, cookies_path
 from ..resources import icon_path, load_stylesheet, stylesheet_path
 from ..service import TorrentService
+from .cookies_dialog import CookiesDialog
 from .settings_dialog import SettingsDialog
 from .tray import TrayManager
 from .ui_builder import UiBuilder
@@ -173,7 +174,7 @@ class TorrentApp(QMainWindow):
         self.error_label.setText(
             "<b>Куки rutracker.org не найдены.</b> Функции добавления и обновления недоступны.<br>"
             f"Ожидаемый файл: <code>{cookies_path()}</code><br>"
-            "Скопируйте строку Cookie из браузера и нажмите «Импорт куки из буфера»."
+            "Скопируйте строку Cookie из браузера и нажмите «Импорт куки»."
         )
         self.error_label.setVisible(True)
 
@@ -264,7 +265,7 @@ class TorrentApp(QMainWindow):
     def update_action(self) -> None:
         if not self.is_operational:
             QMessageBox.warning(
-                self, "Нет доступа", "Сначала укажите куки rutracker (кнопка «Импорт куки из буфера»)."
+                self, "Нет доступа", "Сначала укажите куки rutracker (кнопка «Импорт куки»)."
             )
             return
         if self._update_thread and self._update_thread.isRunning():
@@ -338,9 +339,11 @@ class TorrentApp(QMainWindow):
     # -------------------------------------------------------------------- куки
     @pyqtSlot()
     def import_cookies_from_clipboard(self) -> None:
-        text = QGuiApplication.clipboard().text().strip()
+        dialog = CookiesDialog(self)
+        if dialog.exec() != CookiesDialog.DialogCode.Accepted:
+            return
+        text = dialog.cookie_text()
         if not text:
-            QMessageBox.warning(self, "Куки", "Буфер обмена пуст.\n\n" + HELP_TEXT)
             return
         try:
             self.service.import_cookies(text)

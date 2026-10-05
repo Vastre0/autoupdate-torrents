@@ -121,6 +121,10 @@ class SettingsDialog(QDialog):
         self.dns_check.setChecked(bool(settings.get("dns_check", True)))
         form.addRow("", self.dns_check)
 
+        self.use_system_proxy = QCheckBox("Использовать системный прокси (HTTP_PROXY/HTTPS_PROXY)")
+        self.use_system_proxy.setChecked(bool(settings.get("use_system_proxy", False)))
+        form.addRow("", self.use_system_proxy)
+
         self.manual_proxy = QLineEdit(str(settings.get("manual_proxy", "")))
         self.manual_proxy.setPlaceholderText("например socks5://127.0.0.1:9050 (Tor) или http://127.0.0.1:8118")
         form.addRow("Резервный прокси:", self.manual_proxy)
@@ -314,6 +318,7 @@ class SettingsDialog(QDialog):
                 "enabled": self.bypass_enabled.isChecked(),
                 "prefer_https_proxy": self.prefer_https_proxy.isChecked(),
                 "dns_check": self.dns_check.isChecked(),
+                "use_system_proxy": self.use_system_proxy.isChecked(),
                 "manual_proxy": self.manual_proxy.text().strip(),
                 "pac_cache_ttl_hours": float(self.pac_ttl.value()),
             },
