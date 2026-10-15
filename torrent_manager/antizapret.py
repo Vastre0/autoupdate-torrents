@@ -33,6 +33,7 @@ _DOMAINS_RE = re.compile(r"(?s)domains\s*=\s*\{(.*?)\}\s*;")
 _SPECIAL_RE = re.compile(r"(?s)var\s+special\s*=\s*\[(.*?)\]\s*;")
 _PATTERNS_BLOCK_RE = re.compile(r"(?s)var\s+patterns(?:_(\w+))?\s*=\s*\{(.*?)\}\s*;")
 _PROXY_RETURN_RE = re.compile(r'return\s+"([^"]*)"')
+_PROXY_VAR_RE = re.compile(r'var\s+proxy\s*=\s*"([^"]*)"')
 _TLD_ENTRY_RE = re.compile(r'"([^"]+)"\s*:\s*\{([^}]*)\}')
 _PATTERN_PAIR_RE = re.compile(r"""['"]([^'"]*)['"]\s*:\s*['"]([^'"]*)['"]""")
 _SPECIAL_ENTRY_RE = re.compile(r"""\[\s*['"]([0-9.]+)['"]\s*,\s*(\d+)\s*\]""")
@@ -222,24 +223,26 @@ def _extract_three_part_suffixes(text: str) -> str | None:
     return None
 
 
-def _parse_proxy_urls(text: str) -> tuple[str | None, str | None]:
-    """Ищет адреса прокси в ``return "HTTPS host:port; PROXY host:port";``."""
-    https_proxy: str | None = None
-    http_proxy: str | None = None
-    for match in _PROXY_RETURN_RE.finditer(text):
-        for token in match.group(1).split(";"):
-            token = token.strip()
-            if not token:
-                continue
-            parts = token.split(None, 1)
+def _parse_proxy_urls(text: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    https: list[str] = []
+    http: list[str] = []
+    sources = [m.group(1) for m in _PROXY_VAR_RE.finditer(text)]
+    sources += [m.group(1) for m in _PROXY_RETURN_RE.finditer(text)]
+    for raw in sources:
+        for token in raw.split(";"):
+            parts = token.strip().split(None, 1)
             if len(parts) != 2:
                 continue
             kind, value = parts[0].upper(), parts[1].strip()
-            if kind == "HTTPS" and https_proxy is None:
-                https_proxy = value if "://" in value else f"https://{value}"
-            elif kind == "PROXY" and http_proxy is None:
-                http_proxy = value if "://" in value else f"http://{value}"
-    return https_proxy, http_proxy
+            if kind == "HTTPS":
+                url = value if "://" in value else f"https://{value}"
+                if url not in https:
+                    https.append(url)
+            elif kind == "PROXY":
+                url = value if "://" in value else f"http://{value}"
+                if url not in http:
+                    http.append(url)
+    return tuple(https), tuple(http)
 
 
 def _parse_patterns(text: str) -> tuple[dict[str, str], dict[str, str]]:
@@ -336,19 +339,41 @@ class PacList:
     patterns_mask: dict[str, str] = field(default_factory=dict)
     three_part_suffixes: re.Pattern[str] | None = None
     three_part_suffixes_source: str = ""
-    proxy_https: str | None = None
-    proxy_http: str | None = None
+    proxies_https: tuple[str, ...] = ()
+    proxies_http: tuple[str, ...] = ()
     source: str = ""
     created_at: float = field(default_factory=time.time)
     domain_count: int = 0
     stats: dict[str, object] = field(default_factory=dict)
 
     # ------------------------------------------------------------------ прокси
+    @property
+    def proxy_https(self) -> str | None:
+        return self.proxies_https[0] if self.proxies_https else None
+
+    @property
+    def proxy_http(self) -> str | None:
+        return self.proxies_http[0] if self.proxies_http else None
+
+    def proxy_urls(self, prefer_https: bool = True) -> list[str]:
+        first = list(self.proxies_https if prefer_https else self.proxies_http)
+        second = list(self.proxies_http if prefer_https else self.proxies_https)
+        return first + [url for url in second if url not in first]
+
     def proxy_url(self, prefer_https: bool = True) -> str | None:
-        """Адрес прокси Антизапрета (в порядке предпочтения)."""
-        if prefer_https:
-            return self.proxy_https or self.proxy_http
-        return self.proxy_http or self.proxy_https
+        urls = self.proxy_urls(prefer_https=prefer_https)
+        return urls[0] if urls else None
+
+    def proxy_urls_for_host(self, host: str, prefer_https: bool = True,
+                            resolve: bool = True) -> list[str]:
+        needed, _reason = self.explain(host, resolve=resolve)
+        if not needed:
+            return []
+        urls = self.proxy_urls(prefer_https=prefer_https)
+        if not urls:
+            raise PacError("В PAC-скрипте не найден адрес прокси")
+        return urls
+
 
     # ---------------------------------------------------------------- проверка
     def _suffix_match(self, host: str) -> bool:
@@ -532,8 +557,8 @@ def parse_pac(text: str, source: str = "") -> PacList:
         except re.error:
             three_part = None
 
-    proxy_https, proxy_http = _parse_proxy_urls(text)
-    if not proxy_https and not proxy_http:
+    proxies_https, proxies_http = _parse_proxy_urls(text)
+    if not proxies_https and not proxies_http:
         raise PacError("В PAC-скрипте не найден адрес прокси")
 
     result = PacList(
@@ -544,8 +569,8 @@ def parse_pac(text: str, source: str = "") -> PacList:
         patterns_mask=patterns_mask,
         three_part_suffixes=three_part,
         three_part_suffixes_source=three_part_source,
-        proxy_https=proxy_https,
-        proxy_http=proxy_http,
+        proxies_https=proxies_https,
+        proxies_http=proxies_http,
         source=source,
         domain_count=total,
     )
@@ -554,7 +579,8 @@ def parse_pac(text: str, source: str = "") -> PacList:
         "zones": len(domains),
         "blocked_ips": len(result.blocked_ips),
         "special_networks": len(special),
-        "proxy": result.proxy_https or result.proxy_http,
+        "proxy": result.proxy_url(),
+        "proxies": result.proxy_urls(),
         "truncated": truncated,
     }
     return result

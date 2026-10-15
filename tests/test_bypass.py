@@ -7,6 +7,7 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import requests
 
@@ -170,6 +171,30 @@ class BypassTests(BypassTestCase):
     def test_host_from_url(self) -> None:
         self.assertEqual(BypassManager.host_from_url("https://rutracker.org:443/x?y=1"), "rutracker.org")
         self.assertEqual(BypassManager.host_from_url("http://127.0.0.1:8080/"), "127.0.0.1")
+
+    def test_status_does_not_start_network_load(self) -> None:
+        manager = self._manager(FakeSession({}))
+        with mock.patch.object(manager, "refresh", side_effect=AssertionError("network")):
+            status = manager.status()
+        self.assertFalse(status["loaded"])
+        self.assertFalse(status["refreshing"])
+
+    def test_system_proxy_is_used_for_pac_and_site(self) -> None:
+        self.config.set_section("bypass", {"use_system_proxy": True})
+        session = FakeSession({PAC_URL: RUTRACKER_PAC})
+        manager = self._manager(session)
+        with mock.patch.dict(os.environ, {
+            "HTTP_PROXY": "http://proxy.local:8080",
+            "HTTPS_PROXY": "http://secure-proxy.local:8443",
+            "ALL_PROXY": "",
+        }, clear=False):
+            self.assertTrue(manager.refresh(force=True))
+            self.assertEqual(session.calls[0][1]["proxies"], {
+                "http": "http://proxy.local:8080",
+                "https": "http://secure-proxy.local:8443",
+            })
+            self.assertEqual(manager.proxies_for_url("https://rutracker.org/")["https"],
+                             "http://secure-proxy.local:8443")
 
 
 if __name__ == "__main__":

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -35,6 +35,11 @@ class SettingsDialog(QDialog):
         self.service = window.service
         self.config = window.config
         self._workers: list[TaskWorker] = []
+        # Статус PAC обновляем сами: фоновая загрузка заканчивается позже,
+        # чем открывается диалог.
+        self._status_timer = QTimer(self)
+        self._status_timer.setInterval(1000)
+        self._status_timer.timeout.connect(self._poll_bypass_status)
 
         self.setWindowTitle("Настройки Torrent Manager")
         self.setMinimumWidth(560)
@@ -107,7 +112,9 @@ class SettingsDialog(QDialog):
 
         explanation = QLabel(
             "Тот же список блокировок, что использует расширение «Обход блокировок Рунета» "
-            "для Firefox: через прокси идут только заблокированные сайты. Браузер не нужен."
+            "для Firefox: через PAC-прокси идут только заблокированные сайты. "
+            "VPN на роутере с прозрачной маршрутизацией работает через прямой маршрут; "
+            "для HTTP/HTTPS-прокси включите системный proxy или укажите ручной."
         )
         explanation.setWordWrap(True)
         layout.addWidget(explanation)
@@ -143,9 +150,9 @@ class SettingsDialog(QDialog):
         pac_layout.addWidget(self.pac_status)
 
         row = QHBoxLayout()
-        refresh_btn = QPushButton("Обновить сейчас")
-        refresh_btn.clicked.connect(self.refresh_pac)
-        row.addWidget(refresh_btn)
+        self.refresh_pac_button = QPushButton("Обновить сейчас")
+        self.refresh_pac_button.clicked.connect(self.refresh_pac)
+        row.addWidget(self.refresh_pac_button)
         row.addStretch()
         pac_layout.addLayout(row)
         layout.addWidget(pac_box)
@@ -164,6 +171,7 @@ class SettingsDialog(QDialog):
 
         layout.addStretch()
         self.update_pac_status()
+        self._status_timer.start()
         return widget
 
     def _build_system_tab(self) -> QWidget:
@@ -238,6 +246,9 @@ class SettingsDialog(QDialog):
         self._run_task(action, done, lambda error: self.qb_status.setText(f"❌ {error}"))
 
     def refresh_pac(self) -> None:
+        if self.service.bypass_status().get("refreshing"):
+            self.update_pac_status()
+            return
         self.pac_status.setText("Загружаем PAC-скрипт…")
         self.apply_to_config()
 
@@ -282,6 +293,14 @@ class SettingsDialog(QDialog):
 
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(config_dir())))
 
+    def _poll_bypass_status(self) -> None:
+        """Раз в секунду подтягивает свежий статус PAC (пока диалог открыт)."""
+        self.update_pac_status()
+
+    def closeEvent(self, event) -> None:  # noqa: N802 - Qt
+        self._status_timer.stop()
+        super().closeEvent(event)
+
     def update_pac_status(self, status: dict | None = None) -> None:
         status = status or self.service.bypass_status()
         age = status.get("age_seconds")
@@ -291,15 +310,28 @@ class SettingsDialog(QDialog):
             age_text = f"обновлён {int(age // 60)} мин назад"
         else:
             age_text = f"обновлён {age / 3600:.1f} ч назад"
+        refreshing = bool(status.get("refreshing"))
+        if refreshing:
+            state_text = "загружается…"
+        elif status.get("loaded"):
+            state_text = f"загружен ({age_text})"
+        else:
+            state_text = f"не загружен ({age_text})"
         lines = [
-            f"Состояние: {'загружен' if status.get('loaded') else 'не загружен'} ({age_text})",
+            f"Состояние: {state_text}",
             f"Источник: {status.get('source') or '—'}",
             f"Прокси: {status.get('proxy') or status.get('manual_proxy') or '—'}",
+            f"Системный proxy: {'включён' if status.get('use_system_proxy') else 'выключен'}",
             f"Доменов в списке: {status.get('domains', 0)}, IP: {status.get('blocked_ips', 0)}",
         ]
         if status.get("error"):
             lines.append(f"Ошибка: {status['error']}")
         self.pac_status.setText("\n".join(lines))
+        button = getattr(self, "refresh_pac_button", None)
+        if button is not None:
+            # Пока идёт загрузка, кнопка неактивна — иначе кажется, что клик «не работает».
+            button.setEnabled(not refreshing)
+            button.setText("Загрузка…" if refreshing else "Обновить сейчас")
 
     # -------------------------------------------------------------------- прим.
     def apply_to_config(self) -> None:

@@ -64,9 +64,14 @@ class TorrentApp(QMainWindow):
             self._show_cookies_warning()
             self.log_message("Приложение запущено без куки rutracker.")
 
-        # Обновляем список блокировок в фоне, чтобы не тормозить запуск.
+        # Обновляем список блокировок: сначала готовый кэш, затем сеть.
         if self.service.bypass.enabled:
-            self.service.bypass.refresh_in_background()
+            self.service.bypass.ensure_loaded(background_refresh=True)
+            self._update_bypass_label()
+            self._bypass_poll_timer = QTimer(self)
+            self._bypass_poll_timer.setInterval(1000)
+            self._bypass_poll_timer.timeout.connect(self._poll_bypass_status)
+            self._bypass_poll_timer.start()
 
     # --------------------------------------------------------------- интерфейс
     def _setup_main_window(self) -> None:
@@ -318,6 +323,12 @@ class TorrentApp(QMainWindow):
         worker.start()
 
     # ------------------------------------------------------------------ статус
+    def _poll_bypass_status(self) -> None:
+        """Обновляет строку состояния, пока идёт загрузка PAC, затем останавливается."""
+        self._update_bypass_label()
+        if not self.service.bypass_status().get("refreshing"):
+            self._bypass_poll_timer.stop()
+
     def _update_bypass_label(self, status: dict | None = None) -> None:
         status = status or self.service.bypass_status()
         if not status.get("enabled"):
@@ -328,6 +339,8 @@ class TorrentApp(QMainWindow):
                 f"Обход блокировок: PAC загружен ({status.get('domains', 0)} доменов), "
                 f"прокси {proxy}"
             )
+            if status.get("use_system_proxy"):
+                text += "; системный proxy включён"
         elif status.get("manual_proxy"):
             text = f"Обход блокировок: PAC недоступен, резервный прокси {status['manual_proxy']}"
         else:

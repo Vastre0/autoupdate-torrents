@@ -47,6 +47,8 @@ class ConfigManager:
             ],
             "pac_cache_ttl_hours": 12,
             "prefer_https_proxy": True,
+            # Использовать HTTP_PROXY/HTTPS_PROXY/ALL_PROXY только явно.
+            "use_system_proxy": False,
             # Ручной прокси (например, socks5://127.0.0.1:9050 для Tor) —
             # используется, если PAC недоступен или обход выключен.
             "manual_proxy": "",

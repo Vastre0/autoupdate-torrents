@@ -71,6 +71,10 @@ class PacParseTests(unittest.TestCase):
         self.assertEqual(self.pac.proxy_http, "http://proxy.antizapret.test:8080")
         self.assertEqual(self.pac.proxy_url(), "https://proxy.antizapret.test:8443")
         self.assertEqual(self.pac.proxy_url(prefer_https=False), "http://proxy.antizapret.test:8080")
+        self.assertEqual(self.pac.proxy_urls(), [
+            "https://proxy.antizapret.test:8443",
+            "http://proxy.antizapret.test:8080",
+        ])
 
     def test_domain_list(self) -> None:
         # 8 фрагментов; «megafon» сжимается до «!fon» (подстановка шаблонов)
@@ -182,6 +186,20 @@ class PacVariantsTests(unittest.TestCase):
         )
         with self.assertRaises(PacError):
             parse_pac(text)
+
+    def test_proxy_variable_and_multiple_routes(self) -> None:
+        text = build_pac({"com": ["example"]}).replace(
+            'return "HTTPS proxy.antizapret.test:8443; PROXY proxy.antizapret.test:8080; DIRECT";',
+            'var proxy = "HTTPS first:443; PROXY second:80; PROXY third:81; DIRECT";\n'
+            'return proxy;',
+        )
+        pac = parse_pac(text)
+        self.assertEqual(pac.proxy_urls(), [
+            "https://first:443", "http://second:80", "http://third:81",
+        ])
+        self.assertEqual(pac.proxy_urls(prefer_https=False), [
+            "http://second:80", "http://third:81", "https://first:443",
+        ])
 
 
 if __name__ == "__main__":

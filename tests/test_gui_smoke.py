@@ -49,11 +49,12 @@ class GuiSmokeTests(unittest.TestCase):
             self.assertFalse(window.is_operational)  # куки ещё не импортированы
             self.assertTrue(window.error_label.isVisibleTo(window))
 
-            # Импорт куки как из буфера обмена
-            from PyQt6.QtGui import QGuiApplication
+            # Импорт куки через диалог (не запускаем модальный UI в smoke-тесте).
+            from torrent_manager.gui.cookies_dialog import CookiesDialog
 
-            QGuiApplication.clipboard().setText("bb_session=abc; bb_ssl=1")
-            with mock.patch("PyQt6.QtWidgets.QMessageBox.information", return_value=None):
+            with mock.patch.object(CookiesDialog, "exec", return_value=CookiesDialog.DialogCode.Accepted), \
+                 mock.patch.object(CookiesDialog, "cookie_text", return_value="bb_session=abc; bb_ssl=1"), \
+                 mock.patch("PyQt6.QtWidgets.QMessageBox.information", return_value=None):
                 window.import_cookies_from_clipboard()
             self.assertTrue(window.is_operational)
 

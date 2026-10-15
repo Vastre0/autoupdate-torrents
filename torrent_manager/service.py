@@ -122,7 +122,10 @@ class TorrentService:
             raise RutrackerError(
                 "Не найдены куки rutracker.org.\n" + cookies_mod.HELP_TEXT
             )
-        self.bypass.ensure_loaded()
+        # Обновление выполняется в worker/systemd-потоке: к моменту первого
+        # запроса PAC должен быть разобран, иначе фоновая загрузка может
+        # проиграть гонку и клиент попробует только прямой маршрут.
+        self.bypass.ensure_loaded(background_refresh=False)
         return RutrackerClient(cookies, bypass=self.bypass, log=self.log)
 
     def list_tracked(self) -> list[dict[str, Any]]:

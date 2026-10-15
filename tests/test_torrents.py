@@ -60,10 +60,17 @@ class _CookieJar:
 
 
 class FakeBypass:
-    def __init__(self, pac_proxy: str | None = None, fallback: str | None = None, enabled: bool = True):
+    def __init__(self, pac_proxy: str | None = None, fallback: str | None = None, enabled: bool = True,
+                 routes: list[dict[str, str]] | None = None):
         self.enabled = enabled
         self.pac_proxy = pac_proxy
         self.fallback = fallback
+        self.routes = routes
+
+    def proxy_routes_for_url(self, url: str):
+        if self.routes is not None:
+            return self.routes
+        return [{"http": self.pac_proxy, "https": self.pac_proxy}] if self.pac_proxy else []
 
     def proxies_for_url(self, url: str):
         return {"http": self.pac_proxy, "https": self.pac_proxy} if self.pac_proxy else None
@@ -126,6 +133,19 @@ class RutrackerClientTests(unittest.TestCase):
         self.assertEqual(len(session.calls), 3)
         self.assertIsNone(session.calls[0]["proxies"])
         self.assertEqual(session.calls[1]["proxies"]["https"], "https://proxy.test:8443")
+
+    def test_proxy_candidates_are_tried_in_order(self) -> None:
+        first = {"http": "http://dead:1", "https": "http://dead:1"}
+        second = {"http": "http://working:2", "https": "http://working:2"}
+        session = FakeSession([
+            requests.exceptions.SSLError("TLS EOF"),
+            FakeResponse(TOPIC_HTML),
+            FakeResponse(content=b"data"),
+        ])
+        client = make_client(session, FakeBypass(routes=[first, second]))
+        client.download_torrent("123")
+        self.assertEqual(session.calls[0]["proxies"], first)
+        self.assertEqual(session.calls[1]["proxies"], second)
 
     def test_blocked_stub_triggers_proxy(self) -> None:
         session = FakeSession([

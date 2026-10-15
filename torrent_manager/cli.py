@@ -123,6 +123,7 @@ def _run_check(log, config: ConfigManager) -> int:
     proxy = bypass.get("proxy") or bypass.get("manual_proxy") or "—"
     log(f"  Обход блокировок: {'включён' if bypass['enabled'] else 'выключен'}, "
         f"источник PAC: {bypass.get('source') or '—'}")
+    log(f"    системный proxy: {'включён' if bypass.get('use_system_proxy') else 'выключен'}")
     log(f"    доменов: {bypass.get('domains', 0)}, IP: {bypass.get('blocked_ips', 0)}, прокси: {proxy}")
     if bypass.get("error"):
         log(f"    ! {bypass['error']}")

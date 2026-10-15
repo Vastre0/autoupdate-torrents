@@ -41,8 +41,20 @@ BLOCK_MARKERS = (
 )
 
 USER_AGENT = (
-    "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0"
+    "Mozilla/5.0 (X11; Linux x86_64; rv:157.0) Gecko/20100101 Firefox/157.0"
 )
+
+DEFAULT_BROWSER_HEADERS = {
+    "User-Agent": USER_AGENT,
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "ru-RU,ru;q=0.8,en-US;q=0.5,en;q=0.3",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "same-origin",
+    "Sec-Fetch-User": "?1",
+}
 
 QBITTORRENT_IMPORT_HINT = (
     "Не установлен модуль qbittorrent-api.\n"
@@ -95,7 +107,10 @@ class RutrackerClient:
         self._log_func = log
         self.timeout = timeout
         self.session = requests.Session()
-        self.session.headers["User-Agent"] = USER_AGENT
+        # Не используем proxy-переменные окружения неявно: маршрут выбирает
+        # BypassManager, а системный proxy включается отдельной настройкой.
+        self.session.trust_env = False
+        self.session.headers.update(DEFAULT_BROWSER_HEADERS)
         for name, value in self.cookies.items():
             self.session.cookies.set(name, value, domain=".rutracker.org")
 
@@ -105,22 +120,48 @@ class RutrackerClient:
 
     # ------------------------------------------------------------------ маршруты
     def _routes(self, url: str) -> list[tuple[dict[str, str] | None, str]]:
-        """Порядок попыток: сначала то, что советует PAC-скрипт."""
+        """Порядок попыток: настроенные proxy, PAC, напрямую, fallback."""
         routes: list[tuple[dict[str, str] | None, str]] = []
-        primary: dict[str, str] | None = None
-        if self.bypass and self.bypass.enabled:
-            primary = self.bypass.proxies_for_url(url)
-        if primary:
-            proxy = primary.get("https") or primary.get("http") or ""
-            routes.append((primary, f"через прокси {proxy}"))
-            routes.append((None, "напрямую"))
-        else:
-            routes.append((None, "напрямую"))
-            if self.bypass and self.bypass.enabled:
-                fallback = self.bypass.fallback_proxies(self.bypass.host_from_url(url))
-                if fallback:
-                    proxy = fallback.get("https") or fallback.get("http") or ""
-                    routes.append((fallback, f"через прокси {proxy} (резервный маршрут)"))
+        bypass = self.bypass
+        configured: list[dict[str, str]] = []
+        # Если задан ручной прокси (например, официальный прокси плагина rutracker),
+        # пробуем его первым делом.
+        if bypass and getattr(bypass, "manual_proxy", ""):
+            manual = {"http": bypass.manual_proxy, "https": bypass.manual_proxy}
+            routes.append((manual, f"через ручной прокси {bypass.manual_proxy}"))
+        if bypass and bypass.enabled:
+            getter = getattr(bypass, "proxy_routes_for_url", None)
+            if getter:
+                try:
+                    configured = getter(url) or []
+                except Exception:  # noqa: BLE001 - proxy не должен ломать запрос
+                    configured = []
+            else:
+                getter = getattr(bypass, "proxies_for_url", None)
+                proxy = getter(url) if getter else None
+                if proxy:
+                    configured = [proxy]
+        for index, route in enumerate(configured):
+            if any(existing == route for existing, _ in routes):
+                continue
+            label = route.get("https") or route.get("http") or "proxy"
+            suffix = "" if index == 0 and not routes else " (резервный proxy)"
+            routes.append((route, f"через прокси {label}{suffix}"))
+        routes.append((None, "напрямую"))
+        if bypass and bypass.enabled:
+            host = bypass.host_from_url(url)
+            route_getter = getattr(bypass, "fallback_routes", None)
+            if route_getter:
+                fallbacks = route_getter(host) or []
+            else:
+                fallback_getter = getattr(bypass, "fallback_proxies", None)
+                fallback = fallback_getter(host) if fallback_getter else None
+                fallbacks = [fallback] if fallback else []
+            for fallback in fallbacks:
+                if any(existing == fallback for existing, _ in routes):
+                    continue
+                label = fallback.get("https") or fallback.get("http") or "proxy"
+                routes.append((fallback, f"через прокси {label} (резервный маршрут)"))
         return routes
 
     def _request(self, url: str, binary: bool = False, params: dict[str, Any] | None = None) -> requests.Response:
@@ -144,6 +185,15 @@ class RutrackerClient:
             if response.status_code in (451, 403) and looks_blocked(response.text):
                 errors.append(f"{label}: заглушка о блокировке (HTTP {response.status_code})")
                 self._log(f"{url}: получена заглушка о блокировке ({label})")
+                continue
+            if response.status_code in (403, 503) and (
+                "cf-mitigated" in response.headers
+                or "challenges.cloudflare.com" in response.text
+                or "just a moment..." in response.text.lower()
+            ):
+                msg = f"{label}: Cloudflare требует проверку браузера (капча / WAF)"
+                errors.append(msg)
+                self._log(f"{url}: {msg}")
                 continue
             if not binary and looks_blocked(response.text):
                 errors.append(f"{label}: заглушка о блокировке")
@@ -280,6 +330,10 @@ class QBittorrentClient:
                 comment=comment,
             )
         except Exception as error:  # noqa: BLE001
+            err_msg = str(error).lower()
+            if "conflict" in err_msg or "409" in err_msg:
+                self._log("Торрент уже загружен в qBittorrent (раздача не менялась).")
+                return True
             raise QBittorrentError(f"Не удалось добавить торрент в qBittorrent: {error}") from error
         if str(result).lower().startswith("fail"):
             raise QBittorrentError(f"qBittorrent отказался добавить торрент: {result}")

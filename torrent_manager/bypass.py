@@ -67,6 +67,11 @@ class BypassManager:
         self._log_func = log
         self._lock = threading.RLock()
         self._session = session or requests.Session()
+        # Системные proxy-переменные применяются только когда пользователь
+        # явно включил соответствующую настройку. Иначе requests может
+        # незаметно перехватить даже прямой маршрут через окружение.
+        if hasattr(self._session, "trust_env"):
+            self._session.trust_env = False
         self._session.headers["User-Agent"] = USER_AGENT
         self._pac: PacList | None = None
         self._state: dict[str, Any] = {}
@@ -132,7 +137,17 @@ class BypassManager:
             return self._last_error
 
     def status(self) -> dict[str, Any]:
-        """Краткое состояние обхода (для GUI/CLI)."""
+        """Краткое состояние обхода (для GUI/CLI).
+
+        Метод вызывается из Qt-таймеров, поэтому не должен сам начинать
+        сетевую загрузку PAC. Кэш загружается при создании клиента или
+        явной диагностике через :meth:`ensure_loaded`.
+        """
+        if self._pac is None:
+            try:
+                self._load_cached_pac()
+            except Exception:  # noqa: BLE001 - статус не должен падать
+                pass
         with self._lock:
             pac = self._pac
             state = dict(self._state)
@@ -145,6 +160,8 @@ class BypassManager:
             "refreshing": refreshing,
             "source": pac.source if pac else state.get("url", ""),
             "proxy": (pac.proxy_url(self.prefer_https_proxy) if pac else "") or "",
+            "proxies": (pac.proxy_urls(self.prefer_https_proxy) if pac else []),
+            "use_system_proxy": self.use_system_proxy,
             "manual_proxy": self.manual_proxy,
             "domains": pac.domain_count if pac else 0,
             "blocked_ips": len(pac.blocked_ips) if pac else 0,
@@ -214,6 +231,23 @@ class BypassManager:
                 continue
         return None
 
+    def _load_cached_pac(self) -> bool:
+        """Разбирает локальный кэш, не обращаясь к сети."""
+        with self._lock:
+            if self._pac is not None:
+                return True
+        text = self._load_from_cache()
+        if not text:
+            return False
+        try:
+            pac = parse_pac(text, source=str(self._state.get("url") or "cache"))
+        except PacError as error:
+            self._log(f"Кэш PAC повреждён ({error}), скачиваем заново.")
+            return False
+        with self._lock:
+            self._pac = pac
+        return True
+
     @property
     def cache_age(self) -> float | None:
         """Возраст кэша PAC в секундах (``None``, если кэша нет)."""
@@ -226,9 +260,17 @@ class BypassManager:
         return age is not None and age < self.ttl_seconds
 
     # --------------------------------------------------------------------- загрузка
-    def _fetch_pac_text(self, proxy: str | None = None) -> tuple[str, str]:
+    def _fetch_pac_text(
+        self,
+        proxy: str | dict[str, str] | None = None,
+    ) -> tuple[str, str]:
         """Скачивает PAC-скрипт с первого доступного зеркала."""
-        proxies = {"http": proxy, "https": proxy} if proxy else None
+        if isinstance(proxy, dict):
+            proxies = dict(proxy)
+        elif proxy:
+            proxies = {"http": proxy, "https": proxy}
+        else:
+            proxies = None
         errors: list[str] = []
         for url in self.pac_urls:
             try:
@@ -268,7 +310,7 @@ class BypassManager:
     def refresh(
         self,
         force: bool = True,
-        proxy: str | None = None,
+        proxy: str | dict[str, str] | None = None,
         min_interval: float = 0.0,
     ) -> bool:
         """Скачивает и разбирает свежий PAC-скрипт.
@@ -296,7 +338,17 @@ class BypassManager:
             self._refreshing = True
         try:
             self._log("Загрузка PAC-скрипта Антизапрета...")
-            candidates = [proxy] if proxy else ([self.manual_proxy] if self.manual_proxy else [None])
+            candidates: list[str | dict[str, str] | None] = []
+            if proxy:
+                candidates.append(proxy)
+            else:
+                if self.use_system_proxy:
+                    system = self._system_proxies()
+                    if system:
+                        candidates.append(system)
+                if self.manual_proxy:
+                    candidates.append(self.manual_proxy)
+                candidates.append(None)
             text: str | None = None
             source = ""
             last_error: Exception | None = None
@@ -331,23 +383,11 @@ class BypassManager:
 
     def ensure_loaded(self, background_refresh: bool = True) -> bool:
         """Гарантирует, что PAC-скрипт разобран (из кэша или из сети)."""
-        with self._lock:
-            if self._pac is not None:
-                return True
-        text = self._load_from_cache()
-        if text:
-            try:
-                pac = parse_pac(text, source=str(self._state.get("url") or "cache"))
-            except PacError as error:
-                self._log(f"Кэш PAC повреждён ({error}), скачиваем заново.")
-                pac = None
-            if pac is not None:
-                with self._lock:
-                    self._pac = pac
-                if not self.cache_is_fresh() and background_refresh:
-                    self.refresh_in_background()
-                    self._log("Кэш PAC устарел, обновляем в фоне.")
-                return True
+        if self._load_cached_pac():
+            if not self.cache_is_fresh() and background_refresh:
+                self.refresh_in_background()
+                self._log("Кэш PAC устарел, обновляем в фоне.")
+            return True
         if not background_refresh:
             return self.refresh(force=True, min_interval=MIN_RETRY_INTERVAL)
         self.refresh_in_background()
@@ -373,20 +413,33 @@ class BypassManager:
         return parsed.hostname or parsed.netloc or url
 
     def _system_proxies(self) -> dict[str, str] | None:
-        """Прокси из переменных окружения (HTTP_PROXY, HTTPS_PROXY, ALL_PROXY)."""
+        """Прокси из переменных окружения HTTP/HTTPS/ALL_PROXY."""
         import os
-        http_proxy = os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy")
-        https_proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")
-        all_proxy = os.environ.get("ALL_PROXY") or os.environ.get("all_proxy")
-        proxies = {}
-        if http_proxy:
-            proxies["http"] = http_proxy
-        if https_proxy:
-            proxies["https"] = https_proxy
-        elif http_proxy and not https_proxy:
-            proxies["https"] = http_proxy
+        from urllib.parse import urlsplit
+
+        def read(*names: str) -> str:
+            for name in names:
+                value = os.environ.get(name, "").strip()
+                if value:
+                    return value
+            return ""
+
+        http_proxy = read("HTTP_PROXY", "http_proxy")
+        https_proxy = read("HTTPS_PROXY", "https_proxy")
+        all_proxy = read("ALL_PROXY", "all_proxy")
+        proxies: dict[str, str] = {}
+        for scheme, value in (("http", http_proxy), ("https", https_proxy)):
+            if not value:
+                continue
+            parsed = urlsplit(value)
+            if parsed.scheme and parsed.netloc:
+                proxies[scheme] = value
         if all_proxy and not proxies:
-            proxies["http"] = proxies["https"] = all_proxy
+            parsed = urlsplit(all_proxy)
+            if parsed.scheme and parsed.netloc:
+                proxies["http"] = proxies["https"] = all_proxy
+        elif http_proxy and "https" not in proxies and "http" in proxies:
+            proxies["https"] = proxies["http"]
         return proxies or None
 
     def proxies_for_host(self, host: str) -> dict[str, str] | None:
@@ -415,33 +468,63 @@ class BypassManager:
     def proxies_for_url(self, url: str) -> dict[str, str] | None:
         return self.proxies_for_host(self.host_from_url(url))
 
-    def fallback_proxies(self, host: str) -> dict[str, str] | None:
-        """Прокси «на всякий случай»: системный > ручной > PAC.
+    def proxy_routes_for_url(self, url: str) -> list[dict[str, str]]:
+        """Все настроенные маршруты через proxy для URL.
 
-        Используется, когда прямое соединение не удалось (типичный признак
-        блокировки со стороны провайдера).
+        Явно выбранный системный proxy проверяется первым. Затем идут все
+        proxy из PAC, если PAC помечает хост как заблокированный. Ручной
+        proxy остаётся fallback-маршрутом, чтобы не отправлять через него
+        обычные незаблокированные запросы.
         """
         if not self.enabled:
-            return None
-
-        # 1. Системный прокси (если включён)
+            return []
+        routes: list[dict[str, str]] = []
         if self.use_system_proxy:
-            sys_proxies = self._system_proxies()
-            if sys_proxies:
-                return sys_proxies
+            system = self._system_proxies()
+            if system:
+                routes.append(system)
+        pac = self.pac
+        if pac is not None:
+            try:
+                urls = pac.proxy_urls_for_host(
+                    self.host_from_url(url),
+                    prefer_https=self.prefer_https_proxy,
+                    resolve=self.dns_check,
+                )
+            except PacError as error:
+                self._log(f"Ошибка PAC: {error}")
+                urls = []
+            routes.extend({"http": value, "https": value} for value in urls)
+        unique: list[dict[str, str]] = []
+        for route in routes:
+            if route and route not in unique:
+                unique.append(route)
+        return unique
 
-        # 2. Ручной прокси
+    def fallback_routes(self, host: str) -> list[dict[str, str]]:
+        """Ручной и PAC proxy для повторной попытки после прямого запроса."""
+        if not self.enabled:
+            return []
+        routes: list[dict[str, str]] = []
+        if self.manual_proxy:
+            routes.append({"http": self.manual_proxy, "https": self.manual_proxy})
+        fallback = self.fallback_proxies(host)
+        if fallback and fallback not in routes:
+            routes.append(fallback)
+        return routes
+
+    def fallback_proxies(self, host: str) -> dict[str, str] | None:
+        """Совместимый API: первый резервный proxy после прямой попытки."""
+        if not self.enabled:
+            return None
+        if self.use_system_proxy:
+            system = self._system_proxies()
+            if system:
+                return system
         if self.manual_proxy:
             return {"http": self.manual_proxy, "https": self.manual_proxy}
-
-        # 3. PAC-прокси
         pac = self.pac
-        if pac is None:
-            self.ensure_loaded(background_refresh=False)
-            pac = self.pac
         if pac is None:
             return None
         proxy = pac.proxy_url(prefer_https=self.prefer_https_proxy)
-        if not proxy:
-            return None
-        return {"http": proxy, "https": proxy}
+        return {"http": proxy, "https": proxy} if proxy else None
